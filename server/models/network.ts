@@ -1,7 +1,7 @@
 import _ from "lodash";
 import {v4 as uuidv4} from "uuid";
 import IrcFramework, {Client as IRCClient} from "irc-framework";
-import Chan, {Channel, ChanType} from "./chan";
+import Chan, {ChanConfig, Channel, ChanType} from "./chan";
 import Msg, {MessageType} from "./msg";
 import Prefix from "./prefix";
 import Helper, {Hostmask} from "../helper";
@@ -65,6 +65,34 @@ export type NetworkWithIrcFramework = Network & {
 	irc: NonNullable<Network["irc"]> & {
 		options: NonNullableIRCWithOptions;
 	};
+};
+
+export type NetworkConfig = {
+	nick: string;
+	name: string;
+	host: string;
+	port: number;
+	tls: boolean;
+	userDisconnected: boolean;
+	rejectUnauthorized: boolean;
+	password: string;
+	awayMessage: string;
+	commands: any[];
+	username: string;
+	realname: string;
+	leaveMessage: string;
+	sasl: string;
+	saslAccount: string;
+	saslPassword: string;
+	channels: ChanConfig[];
+	uuid: string;
+	proxyHost: string;
+	proxyPort: number;
+	proxyUsername: string;
+	proxyPassword: string;
+	proxyEnabled: boolean;
+	highlightRegex?: string;
+	ignoreList: any[];
 };
 
 class Network {
@@ -205,7 +233,7 @@ class Network {
 		this.proxyEnabled = !!this.proxyEnabled;
 
 		const error = function (network: Network, text: string) {
-			network.channels[0].pushMessage(
+			network.getLobby().pushMessage(
 				client,
 				new Msg({
 					type: MessageType.ERROR,
@@ -238,7 +266,7 @@ class Network {
 			if (Config.values.public) {
 				this.name = Config.values.defaults.name;
 				// Sync lobby channel name
-				this.channels[0].name = Config.values.defaults.name;
+				this.getLobby().name = Config.values.defaults.name;
 			}
 
 			this.host = Config.values.defaults.host;
@@ -398,7 +426,7 @@ class Network {
 			.filter((command) => command.length > 0);
 
 		// Sync lobby channel name
-		this.channels[0].name = this.name;
+		this.getLobby().name = this.name;
 
 		if (this.name !== oldNetworkName) {
 			// Send updated network name to all connected clients
@@ -413,10 +441,8 @@ class Network {
 		}
 
 		if (this.irc) {
-			const connected = this.irc.connection && this.irc.connection.connected;
-
 			if (this.nick !== oldNick) {
-				if (connected) {
+				if (this.irc.connected) {
 					// Send new nick straight away
 					this.irc.changeNick(this.nick);
 				} else {
@@ -431,7 +457,7 @@ class Network {
 			}
 
 			if (
-				connected &&
+				this.irc.connected &&
 				this.realname !== oldRealname &&
 				this.irc.network.cap.isEnabled("setname")
 			) {
@@ -647,6 +673,10 @@ class Network {
 			// Skip network lobby (it's always unshifted into first position)
 			return i > 0 && that.name.toLowerCase() === name;
 		});
+	}
+
+	getLobby() {
+		return this.channels[0];
 	}
 }
 
