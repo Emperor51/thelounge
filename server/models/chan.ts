@@ -33,6 +33,13 @@ export type FilteredChannel = Chan & {
 	totalMessages: number;
 };
 
+export type ChanConfig = {
+	name: string;
+	key?: string;
+	muted?: boolean;
+	type?: string;
+};
+
 class Chan {
 	// TODO: don't force existence, figure out how to make TS infer it.
 	id!: number;
@@ -260,7 +267,7 @@ class Chan {
 		}
 
 		for (const messageStorage of client.messageStorage) {
-			messageStorage.index(target.network, targetChannel, msg);
+			messageStorage.index(target.network, targetChannel, msg).catch((e) => log.error(e));
 		}
 	}
 	loadMessages(client: Client, network: Network) {
@@ -287,7 +294,7 @@ class Chan {
 		}
 
 		client.messageProvider
-			.getMessages(network, this)
+			.getMessages(network, this, () => client.idMsg++)
 			.then((messages) => {
 				if (messages.length === 0) {
 					if (network.irc!.network.cap.isEnabled("znc.in/playback")) {

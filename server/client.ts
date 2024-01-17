@@ -6,18 +6,19 @@ import crypto from "crypto";
 import colors from "chalk";
 
 import log from "./log";
-import Chan, {Channel, ChanType} from "./models/chan";
+import Chan, {ChanConfig, Channel, ChanType} from "./models/chan";
 import Msg, {MessageType, UserInMessage} from "./models/msg";
 import Config from "./config";
-import constants from "../client/js/constants";
+import {condensedTypes} from "../shared/irc";
 
 import inputs from "./plugins/inputs";
 import PublicClient from "./plugins/packages/publicClient";
 import SqliteMessageStorage from "./plugins/messageStorage/sqlite";
 import TextFileMessageStorage from "./plugins/messageStorage/text";
-import Network, {IgnoreListItem, NetworkWithIrcFramework} from "./models/network";
+import Network, {IgnoreListItem, NetworkConfig, NetworkWithIrcFramework} from "./models/network";
 import ClientManager from "./clientManager";
-import {MessageStorage, SearchQuery} from "./plugins/messageStorage/types";
+import {MessageStorage, SearchQuery, SearchResponse} from "./plugins/messageStorage/types";
+import {StorageCleaner} from "./storageCleaner";
 
 type OrderItem = Chan["id"] | Network["uuid"];
 type Order = OrderItem[];
@@ -78,6 +79,7 @@ export type UserConfig = {
 		hostname?: string;
 		isSecure?: boolean;
 	};
+	networks?: NetworkConfig[];
 };
 
 export type Mention = {
@@ -95,9 +97,7 @@ class Client {
 	attachedClients!: {
 		[socketId: string]: {token: string; openChannel: number};
 	};
-	config!: UserConfig & {
-		networks?: Network[];
-	};
+	config!: UserConfig;
 	id!: number;
 	idMsg!: number;
 	idChan!: number;
@@ -138,16 +138,25 @@ class Client {
 
 		if (!Config.values.public && client.config.log) {
 			if (Config.values.messageStorage.includes("sqlite")) {
-				client.messageProvider = new SqliteMessageStorage(client);
+				client.messageProvider = new SqliteMessageStorage(client.name);
+
+				if (Config.values.storagePolicy.enabled) {
+					log.info(
+						`Activating storage cleaner. Policy: ${Config.values.storagePolicy.deletionPolicy}. MaxAge: ${Config.values.storagePolicy.maxAgeDays} days`
+					);
+					const cleaner = new StorageCleaner(client.messageProvider);
+					cleaner.start();
+				}
+
 				client.messageStorage.push(client.messageProvider);
 			}
 
 			if (Config.values.messageStorage.includes("text")) {
-				client.messageStorage.push(new TextFileMessageStorage(client));
+				client.messageStorage.push(new TextFileMessageStorage(client.name));
 			}
 
 			for (const messageStorage of client.messageStorage) {
-				messageStorage.enable();
+				messageStorage.enable().catch((e) => log.error(e));
 			}
 		}
 
@@ -176,8 +185,16 @@ class Client {
 				this.registerPushSubscription(session, session.pushSubscription, true);
 			}
 		});
+	}
 
-		(client.config.networks || []).forEach((network) => client.connect(network, true));
+	connect() {
+		const client = this;
+
+		if (client.networks.length !== 0) {
+			throw new Error(`${client.name} is already connected`);
+		}
+
+		(client.config.networks || []).forEach((network) => client.connectToNetwork(network, true));
 
 		// Networks are stored directly in the client object
 		// We don't need to keep it in the config object
@@ -188,7 +205,7 @@ class Client {
 
 			// Networks are created instantly, but to reduce server load on startup
 			// We randomize the IRC connections and channel log loading
-			let delay = manager.clients.length * 500;
+			let delay = client.manager.clients.length * 500;
 			client.networks.forEach((network) => {
 				setTimeout(() => {
 					network.channels.forEach((channel) => channel.loadMessages(client, network));
@@ -201,7 +218,7 @@ class Client {
 				delay += 1000 + Math.floor(Math.random() * 1000);
 			});
 
-			client.fileHash = manager.getDataToSave(client).newHash;
+			client.fileHash = client.manager.getDataToSave(client).newHash;
 		}
 	}
 
@@ -238,19 +255,19 @@ class Client {
 		return false;
 	}
 
-	connect(args: Record<string, any>, isStartup = false) {
+	networkFromConfig(args: Record<string, any>): Network {
 		const client = this;
+
 		let channels: Chan[] = [];
 
-		// Get channel id for lobby before creating other channels for nicer ids
-		const lobbyChannelId = client.idChan++;
-
 		if (Array.isArray(args.channels)) {
-			let badName = false;
+			let badChanConf = false;
 
-			args.channels.forEach((chan: Chan) => {
-				if (!chan.name) {
-					badName = true;
+			args.channels.forEach((chan: ChanConfig) => {
+				const type = ChanType[(chan.type || "channel").toUpperCase()];
+
+				if (!chan.name || !type) {
+					badChanConf = true;
 					return;
 				}
 
@@ -258,13 +275,13 @@ class Client {
 					client.createChannel({
 						name: chan.name,
 						key: chan.key || "",
-						type: chan.type,
+						type: type,
 						muted: chan.muted,
 					})
 				);
 			});
 
-			if (badName && client.name) {
+			if (badChanConf && client.name) {
 				log.warn(
 					"User '" +
 						client.name +
@@ -291,7 +308,7 @@ class Client {
 		}
 
 		// TODO; better typing for args
-		const network = new Network({
+		return new Network({
 			uuid: args.uuid,
 			name: String(
 				args.name || (Config.values.lockNetwork ? Config.values.defaults.name : "") || ""
@@ -319,9 +336,18 @@ class Client {
 			proxyUsername: String(args.proxyUsername || ""),
 			proxyPassword: String(args.proxyPassword || ""),
 		});
+	}
+
+	connectToNetwork(args: Record<string, any>, isStartup = false) {
+		const client = this;
+
+		// Get channel id for lobby before creating other channels for nicer ids
+		const lobbyChannelId = client.idChan++;
+
+		const network = this.networkFromConfig(args);
 
 		// Set network lobby channel id
-		network.channels[0].id = lobbyChannelId;
+		network.getLobby().id = lobbyChannelId;
 
 		client.networks.push(network);
 		client.emit("network", {
@@ -344,7 +370,7 @@ class Client {
 		});
 
 		if (network.userDisconnected) {
-			network.channels[0].pushMessage(
+			network.getLobby().pushMessage(
 				client,
 				new Msg({
 					text: "You have manually disconnected from this network before, use the /connect command to connect again.",
@@ -359,7 +385,7 @@ class Client {
 
 		if (!isStartup) {
 			client.save();
-			channels.forEach((channel) => channel.loadMessages(client, network));
+			network.channels.forEach((channel) => channel.loadMessages(client, network));
 		}
 	}
 
@@ -465,38 +491,9 @@ class Client {
 		const cmd = args?.shift()?.toLowerCase() || "";
 
 		const irc = target.network.irc;
-		let connected = irc && irc.connection && irc.connection.connected;
+		const connected = irc?.connected;
 
-		if (inputs.userInputs.has(cmd)) {
-			const plugin = inputs.userInputs.get(cmd);
-
-			if (!plugin) {
-				// should be a no-op
-				throw new Error(`Plugin ${cmd} not found`);
-			}
-
-			if (typeof plugin.input === "function" && (connected || plugin.allowDisconnected)) {
-				connected = true;
-				plugin.input.apply(client, [target.network, target.chan, cmd, args]);
-			}
-		} else if (inputs.pluginCommands.has(cmd)) {
-			const plugin = inputs.pluginCommands.get(cmd);
-
-			if (typeof plugin.input === "function" && (connected || plugin.allowDisconnected)) {
-				connected = true;
-				plugin.input(
-					new PublicClient(client, plugin.packageInfo),
-					{network: target.network, chan: target.chan},
-					cmd,
-					args
-				);
-			}
-		} else if (connected) {
-			// TODO: fix
-			irc!.raw(text);
-		}
-
-		if (!connected) {
+		const emitFailureDisconnected = () => {
 			target.chan.pushMessage(
 				this,
 				new Msg({
@@ -504,7 +501,44 @@ class Client {
 					text: "You are not connected to the IRC network, unable to send your command.",
 				})
 			);
+		};
+
+		const plugin = inputs.userInputs.get(cmd);
+
+		if (plugin) {
+			if (!connected && !plugin.allowDisconnected) {
+				emitFailureDisconnected();
+				return;
+			}
+
+			plugin.input.apply(client, [target.network, target.chan, cmd, args]);
+			return;
 		}
+
+		const extPlugin = inputs.pluginCommands.get(cmd);
+
+		if (extPlugin) {
+			if (!connected && !extPlugin.allowDisconnected) {
+				emitFailureDisconnected();
+				return;
+			}
+
+			extPlugin.input(
+				new PublicClient(client, extPlugin.packageInfo),
+				{network: target.network, chan: target.chan},
+				cmd,
+				args
+			);
+			return;
+		}
+
+		if (!connected) {
+			emitFailureDisconnected();
+			return;
+		}
+
+		// TODO: fix
+		irc!.raw(text);
 	}
 
 	compileCustomHighlights() {
@@ -569,7 +603,7 @@ class Client {
 					startIndex--;
 
 					// Do not count condensed messages towards the 100 messages
-					if (constants.condensedTypes.has(chan.messages[i].type)) {
+					if (condensedTypes.has(chan.messages[i].type)) {
 						continue;
 					}
 
@@ -614,19 +648,16 @@ class Client {
 		}
 
 		for (const messageStorage of this.messageStorage) {
-			messageStorage.deleteChannel(target.network, target.chan);
+			messageStorage.deleteChannel(target.network, target.chan).catch((e) => log.error(e));
 		}
 	}
 
-	search(query: SearchQuery) {
-		if (this.messageProvider === undefined) {
-			return Promise.resolve({
+	async search(query: SearchQuery): Promise<SearchResponse> {
+		if (!this.messageProvider?.isEnabled) {
+			return {
+				...query,
 				results: [],
-				target: "",
-				networkUuid: "",
-				offset: 0,
-				searchTerm: query?.searchTerm,
-			});
+			};
 		}
 
 		return this.messageProvider.search(query);
@@ -767,7 +798,7 @@ class Client {
 		});
 
 		for (const messageStorage of this.messageStorage) {
-			messageStorage.close();
+			messageStorage.close().catch((e) => log.error(e));
 		}
 	}
 

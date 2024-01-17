@@ -4,20 +4,26 @@ import {Channel} from "../../models/channel";
 import {Message} from "../../models/message";
 import {Network} from "../../models/network";
 import Client from "../../client";
+import type {MessageType} from "../../models/msg";
+
+export type DeletionRequest = {
+	olderThanDays: number;
+	messageTypes: MessageType[] | null; // null means no restriction
+	limit: number; // -1 means unlimited
+};
 
 interface MessageStorage {
-	client: Client;
 	isEnabled: boolean;
 
-	enable(): void;
+	enable(): Promise<void>;
 
-	close(callback?: () => void): void;
+	close(): Promise<void>;
 
-	index(network: Network, channel: Channel, msg: Message): void;
+	index(network: Network, channel: Channel, msg: Message): Promise<void>;
 
-	deleteChannel(network: Network, channel: Channel);
+	deleteChannel(network: Network, channel: Channel): Promise<void>;
 
-	getMessages(network: Network, channel: Channel): Promise<Message[]>;
+	getMessages(network: Network, channel: Channel, nextID: () => number): Promise<Message[]>;
 
 	canProvideMessages(): boolean;
 }
@@ -26,20 +32,15 @@ export type SearchQuery = {
 	searchTerm: string;
 	networkUuid: string;
 	channelName: string;
-	offset: number | string;
+	offset: number;
 };
 
-export type SearchResponse =
-	| (Omit<SearchQuery, "channelName" | "offset"> & {
-			results: Message[];
-			target: string;
-			offset: number;
-	  })
-	| [];
+export type SearchResponse = SearchQuery & {
+	results: Message[];
+};
 
 type SearchFunction = (query: SearchQuery) => Promise<SearchResponse>;
 
-export interface SqliteMessageStorage extends MessageStorage {
-	database: Database;
-	search: SearchFunction | [];
+export interface SearchableMessageStorage extends MessageStorage {
+	search: SearchFunction;
 }

@@ -15,7 +15,7 @@ const input: PluginInputHandler = function (network, chan, cmd, args) {
 			return;
 		}
 
-		if (irc.connection && irc.connection.connected) {
+		if (irc.connected) {
 			chan.pushMessage(
 				this,
 				new Msg({
@@ -39,7 +39,7 @@ const input: PluginInputHandler = function (network, chan, cmd, args) {
 	}
 
 	const host = args[0];
-	this.connect({host, port, tls});
+	this.connectToNetwork({host, port, tls});
 
 	return true;
 };
