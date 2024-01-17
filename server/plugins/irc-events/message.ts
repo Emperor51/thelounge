@@ -7,6 +7,7 @@ import Chan, {ChanType} from "../../models/chan";
 import User from "../../models/user";
 
 const nickRegExp = /(?:\x03[0-9]{1,2}(?:,[0-9]{1,2})?)?([\w[\]\\`^{|}-]+)/g;
+const swearWords = ['shit', 'fuck', 'cunt'];
 
 export default <IrcEventHandler>function (irc, network) {
 	const client = this;
@@ -37,6 +38,15 @@ export default <IrcEventHandler>function (irc, network) {
 		handleMessage(data);
 	});
 
+	function filterSwearWords(message) {
+    	let filteredMessage = message;
+   	 	swearWords.forEach(swearWord => {
+        	const regex = new RegExp(swearWord, 'gi'); // 'gi' for global, case-insensitive
+        	filteredMessage = filteredMessage.replace(regex, '****'); // Replace with asterisks
+    	});
+    return filteredMessage;
+	}
+
 	function handleMessage(data: {
 		nick: string;
 		hostname: string;
@@ -55,6 +65,9 @@ export default <IrcEventHandler>function (irc, network) {
 		let showInActive = false;
 		const self = data.nick === irc.user.nick;
 
+		// Filter for swear words
+		data.message = filterSwearWords(data.message);
+		
 		// Some servers send messages without any nickname
 		if (!data.nick) {
 			data.from_server = true;
