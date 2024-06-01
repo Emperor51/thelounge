@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/restrict-template-expressions */
 import path from "path";
 import {expect} from "chai";
 import util from "../util";
 import Config from "../../server/config";
-import link, {LinkPreview} from "../../server/plugins/irc-events/link";
+import link from "../../server/plugins/irc-events/link";
+import {LinkPreview} from "../../shared/types/msg";
 
 describe("Link plugin", function () {
 	// Increase timeout due to unpredictable I/O on CI services

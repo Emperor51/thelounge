@@ -47,7 +47,6 @@ describe("Server", function () {
 		server.close(done);
 	});
 
-	// eslint-disable-next-line @typescript-eslint/restrict-template-expressions
 	const webURL = `http://${Config.values.host}:${Config.values.port}/`;
 
 	describe("Express", () => {
@@ -110,14 +109,13 @@ describe("Server", function () {
 			});
 
 			client.on("network", (data) => {
-				expect(data.networks).to.be.an("array");
-				expect(data.networks).to.have.lengthOf(1);
-				expect(data.networks[0].nick).to.equal("test-user");
-				expect(data.networks[0].name).to.equal("Test Network");
-				expect(data.networks[0].channels).to.have.lengthOf(3);
-				expect(data.networks[0].channels[0].name).to.equal("Test Network");
-				expect(data.networks[0].channels[1].name).to.equal("#thelounge");
-				expect(data.networks[0].channels[2].name).to.equal("#spam");
+				expect(data.network).to.exist;
+				expect(data.network.nick).to.equal("test-user");
+				expect(data.network.name).to.equal("Test Network");
+				expect(data.network.channels).to.have.lengthOf(3);
+				expect(data.network.channels[0].name).to.equal("Test Network");
+				expect(data.network.channels[1].name).to.equal("#thelounge");
+				expect(data.network.channels[2].name).to.equal("#spam");
 				done();
 			});
 		});
@@ -152,7 +150,7 @@ describe("Server", function () {
 				expect(data.active).to.equal(-1);
 				expect(data.networks).to.be.an("array");
 				expect(data.networks).to.be.empty;
-				expect(data.token).to.be.null;
+				expect(data.token).to.be.undefined;
 
 				done();
 			});

@@ -1,7 +1,8 @@
 import _ from "lodash";
 import {IrcEventHandler} from "../../client";
 
-import Msg, {MessageType} from "../../models/msg";
+import Msg from "../../models/msg";
+import {MessageType} from "../../../shared/types/msg";
 
 export default <IrcEventHandler>function (irc, network) {
 	const client = this;
@@ -34,7 +35,6 @@ export default <IrcEventHandler>function (irc, network) {
 
 		const msg = new Msg({
 			type: MessageType.MODE_CHANNEL,
-			// eslint-disable-next-line @typescript-eslint/restrict-template-expressions
 			text: `${data.raw_modes} ${data.raw_params.join(" ")}`,
 		});
 		targetChan.pushMessage(client, msg);
